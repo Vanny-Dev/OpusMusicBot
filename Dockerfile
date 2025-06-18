@@ -22,4 +22,4 @@ RUN adduser -S botuser -u 1001
 USER botuser
 
 # Start the bot
-CMD ["node", "server.js"]
+CMD ["node", "index.js"]

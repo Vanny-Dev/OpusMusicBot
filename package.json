@@ -1,11 +1,11 @@
 {
   "name": "opusmusicbot",
   "version": "1.0.0",
-  "main": "server.js",
+  "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -23,6 +23,7 @@
     "discord.js": "^14.20.0",
     "distube": "^5.0.7",
     "dotenv": "^16.5.0",
+    "ffmpeg": "^0.0.4",
     "ffmpeg-static": "^5.2.0",
     "nodemon": "^3.1.10",
     "ytdl-core": "^4.11.5"
