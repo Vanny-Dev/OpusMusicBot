@@ -70,64 +70,89 @@ function isMusicUrl(query) {
 }
 
 // DisTube Events
+// DisTube Events with better error handling
 distube.on('playSong', (queue, song) => {
-    const embed = new EmbedBuilder()
-        .setColor('#FF6B6B')
-        .setTitle('🎵 Now Playing')
-        .setDescription(`**[${song.name}](${song.url})**`)
-        .addFields(
-            { name: '⏱️ Duration', value: `\`${song.formattedDuration}\``, inline: true },
-            { name: '👤 Requested by', value: song.user.toString(), inline: true },
-            { name: '📍 Position', value: `\`${queue.songs.indexOf(song) + 1}/${queue.songs.length}\``, inline: true }
-        )
-        .setThumbnail(song.thumbnail)
-        .setFooter({ 
-            text: `🔊 Volume: ${queue.volume}% • 🎶 Queue: ${queue.songs.length} songs`,
-            iconURL: client.user.displayAvatarURL()
-        })
-        .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setColor('#FF6B6B')
+            .setTitle('🎵 Now Playing')
+            .setDescription(`**[${song.name}](${song.url})**`)
+            .addFields(
+                { name: '⏱️ Duration', value: `\`${song.formattedDuration}\``, inline: true },
+                { name: '👤 Requested by', value: song.user.toString(), inline: true },
+                { name: '📍 Position', value: `\`${queue.songs.indexOf(song) + 1}/${queue.songs.length}\``, inline: true }
+            )
+            .setThumbnail(song.thumbnail)
+            .setFooter({ 
+                text: `🔊 Volume: ${queue.volume}% • 🎶 Queue: ${queue.songs.length} songs`,
+                iconURL: client.user.displayAvatarURL()
+            })
+            .setTimestamp();
 
-    queue.textChannel.send({ embeds: [embed] });
+        if (queue.textChannel && typeof queue.textChannel.send === 'function') {
+            queue.textChannel.send({ embeds: [embed] }).catch(err => {
+                console.error('Failed to send playSong message:', err);
+            });
+        }
+    } catch (error) {
+        console.error('Error in playSong event:', error);
+    }
 });
 
 distube.on('addSong', (queue, song) => {
-    const embed = new EmbedBuilder()
-        .setColor('#4ECDC4')
-        .setTitle('✅ Song Added to Queue')
-        .setDescription(`**[${song.name}](${song.url})**`)
-        .addFields(
-            { name: '⏱️ Duration', value: `\`${song.formattedDuration}\``, inline: true },
-            { name: '👤 Requested by', value: song.user.toString(), inline: true },
-            { name: '🔢 Position', value: `\`#${queue.songs.length}\``, inline: true }
-        )
-        .setThumbnail(song.thumbnail)
-        .setFooter({ 
-            text: `🎵 Total songs in queue: ${queue.songs.length}`,
-            iconURL: client.user.displayAvatarURL()
-        })
-        .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setColor('#4ECDC4')
+            .setTitle('✅ Song Added to Queue')
+            .setDescription(`**[${song.name}](${song.url})**`)
+            .addFields(
+                { name: '⏱️ Duration', value: `\`${song.formattedDuration}\``, inline: true },
+                { name: '👤 Requested by', value: song.user.toString(), inline: true },
+                { name: '🔢 Position', value: `\`#${queue.songs.length}\``, inline: true }
+            )
+            .setThumbnail(song.thumbnail)
+            .setFooter({ 
+                text: `🎵 Total songs in queue: ${queue.songs.length}`,
+                iconURL: client.user.displayAvatarURL()
+            })
+            .setTimestamp();
 
-    queue.textChannel.send({ embeds: [embed] });
+        if (queue.textChannel && typeof queue.textChannel.send === 'function') {
+            queue.textChannel.send({ embeds: [embed] }).catch(err => {
+                console.error('Failed to send addSong message:', err);
+            });
+        }
+    } catch (error) {
+        console.error('Error in addSong event:', error);
+    }
 });
 
 distube.on('addList', (queue, playlist) => {
-    const embed = new EmbedBuilder()
-        .setColor('#A8E6CF')
-        .setTitle('📋 Playlist Added to Queue')
-        .setDescription(`**[${playlist.name}](${playlist.url})**`)
-        .addFields(
-            { name: '🎵 Songs', value: `\`${playlist.songs.length}\``, inline: true },
-            { name: '⏱️ Duration', value: `\`${playlist.formattedDuration}\``, inline: true },
-            { name: '👤 Requested by', value: playlist.user.toString(), inline: true }
-        )
-        .setThumbnail(playlist.thumbnail)
-        .setFooter({ 
-            text: `🎶 Added ${playlist.songs.length} songs to queue`,
-            iconURL: client.user.displayAvatarURL()
-        })
-        .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setColor('#A8E6CF')
+            .setTitle('📋 Playlist Added to Queue')
+            .setDescription(`**[${playlist.name}](${playlist.url})**`)
+            .addFields(
+                { name: '🎵 Songs', value: `\`${playlist.songs.length}\``, inline: true },
+                { name: '⏱️ Duration', value: `\`${playlist.formattedDuration}\``, inline: true },
+                { name: '👤 Requested by', value: playlist.user.toString(), inline: true }
+            )
+            .setThumbnail(playlist.thumbnail)
+            .setFooter({ 
+                text: `🎶 Added ${playlist.songs.length} songs to queue`,
+                iconURL: client.user.displayAvatarURL()
+            })
+            .setTimestamp();
 
-    queue.textChannel.send({ embeds: [embed] });
+        if (queue.textChannel && typeof queue.textChannel.send === 'function') {
+            queue.textChannel.send({ embeds: [embed] }).catch(err => {
+                console.error('Failed to send addList message:', err);
+            });
+        }
+    } catch (error) {
+        console.error('Error in addList event:', error);
+    }
 });
 
 distube.on('searchResult', (message, result) => {
@@ -180,6 +205,12 @@ distube.on('searchNoResult', (message) => {
 distube.on('error', (channel, error) => {
     console.error('DisTube Error:', error);
     
+    // Check if channel is valid and has a send method
+    if (!channel || typeof channel.send !== 'function') {
+        console.error('Invalid channel object in DisTube error event:', channel);
+        return;
+    }
+    
     const errorMessage = getErrorMessage(error);
     const embed = new EmbedBuilder()
         .setColor('#FF6B6B')
@@ -191,7 +222,9 @@ distube.on('error', (channel, error) => {
         })
         .setTimestamp();
 
-    channel.send({ embeds: [embed] });
+    channel.send({ embeds: [embed] }).catch(err => {
+        console.error('Failed to send error message to channel:', err);
+    });
 });
 
 distube.on('empty', (queue) => {
@@ -362,7 +395,9 @@ client.on('messageCreate', async (message) => {
                     })
                     .setTimestamp();
                 
-                message.channel.send({ embeds: [embed] });
+                message.channel.send({ embeds: [embed] }).catch(err => {
+                    console.error('Failed to send play error message:', err);
+                });
             }
             break;
         }
