@@ -7,9 +7,6 @@
     "start": "node index.js",
     "dev": "nodemon index.js"
   },
-  "engines": {
-    "node": ">=18.0.0"
-  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -23,6 +20,7 @@
     "discord.js": "^14.20.0",
     "distube": "^5.0.7",
     "dotenv": "^16.5.0",
+    "express": "^5.1.0",
     "ffmpeg": "^0.0.4",
     "ffmpeg-static": "^5.2.0",
     "nodemon": "^3.1.10",
