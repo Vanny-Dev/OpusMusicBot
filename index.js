@@ -35,6 +35,14 @@ const distube = new DisTube(client, {
     ]
 });
 
+// Helper function to safely get error message
+function getErrorMessage(error) {
+    if (typeof error === 'string') return error;
+    if (error && error.message) return error.message;
+    if (error && error.toString) return error.toString();
+    return 'Unknown error occurred';
+}
+
 // Helper function to detect URLs
 function isUrl(string) {
     try {
@@ -172,10 +180,11 @@ distube.on('searchNoResult', (message) => {
 distube.on('error', (channel, error) => {
     console.error('DisTube Error:', error);
     
+    const errorMessage = getErrorMessage(error);
     const embed = new EmbedBuilder()
         .setColor('#FF6B6B')
         .setTitle('❌ Error Occurred')
-        .setDescription(`\`\`\`${error.message.slice(0, 1900)}\`\`\``)
+        .setDescription(`\`\`\`${errorMessage.slice(0, 1900)}\`\`\``)
         .setFooter({ 
             text: 'Please try again or contact support if the issue persists',
             iconURL: client.user.displayAvatarURL()
@@ -248,7 +257,7 @@ function isValidPlaylistUrl(url) {
 // Bot ready event
 client.once('ready', () => {
     console.log(`${client.user.tag} is online!`);
-    client.user.setActivity('to w!help', { type: ActivityType.Playing });
+    client.user.setActivity('to w!help', { type: ActivityType.Listening });
 });
 
 // Message handler
@@ -338,10 +347,11 @@ client.on('messageCreate', async (message) => {
             } catch (error) {
                 console.error('Play error:', error);
                 
+                const errorMessage = getErrorMessage(error);
                 const embed = new EmbedBuilder()
                     .setColor('#FF6B6B')
                     .setTitle('❌ Playback Error')
-                    .setDescription(`Unable to find or play the requested song: \`${error.message.slice(0, 100)}...\``)
+                    .setDescription(`Unable to find or play the requested song: \`${errorMessage.slice(0, 100)}...\``)
                     .addFields({
                         name: '💡 Troubleshooting Tips',
                         value: '• Check your spelling\n• Try adding the artist name\n• Use more specific search terms\n• Make sure the song exists on YouTube'
@@ -693,7 +703,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // Login with your bot token
-client.login(process.env.DISCORD_TOKEN); // Replace with your actual bot token
+client.login(process.env.DISCORD_TOKEN);
 
 // Handle process termination
 process.on('SIGINT', () => {
