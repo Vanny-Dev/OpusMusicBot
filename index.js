@@ -6,6 +6,10 @@ const { SpotifyPlugin } = require('@distube/spotify');
 const ffmpeg = require('ffmpeg-static');
 require('dotenv').config();
 
+// Set environment variables to disable update checks
+process.env.YTSR_NO_UPDATE = 'true';
+process.env.YTDL_NO_UPDATE = 'true';
+
 // Bot configuration
 const client = new Client({
     intents: [
@@ -16,7 +20,7 @@ const client = new Client({
     ]
 });
 
-// DisTube configuration with improved settings
+// DisTube configuration with improved settings and error handling
 const distube = new DisTube(client, {
     emitNewSongOnly: true,
     emitAddSongWhenCreatingQueue: false,
@@ -26,13 +30,33 @@ const distube = new DisTube(client, {
     },
     plugins: [
         new YtDlpPlugin({
-            update: false
+            update: false // Disable update checks
         }),
         new YouTubePlugin({
-            cookies: [] // Add cookies if needed for age-restricted content
+            cookies: [], // Add cookies if needed for age-restricted content
+            ytdlOptions: {
+                highWaterMark: 1 << 25, // 32MB buffer
+                quality: 'highestaudio',
+                filter: 'audioonly',
+                format: 'bestaudio[ext=webm+acodec=opus+asr=48000]/bestaudio',
+                requestOptions: {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                }
+            }
         }),
         new SpotifyPlugin()
-    ]
+    ],
+    customFilters: {
+        "8D": "apulsator=hz=0.125",
+        "bassboost": "bass=g=20,dynaudnorm=f=200",
+        "echo": "aecho=0.8:0.9:1000:0.3",
+        "karaoke": "pan=mono|c0=0.5*c0+-0.5*c1",
+        "nightcore": "aresample=48000,asetrate=48000*1.25",
+        "reverse": "areverse",
+        "vaporwave": "aresample=48000,asetrate=48000*0.8"
+    }
 });
 
 // Helper function to safely get error message
@@ -69,8 +93,18 @@ function isMusicUrl(query) {
     return urlPatterns.some(pattern => pattern.test(query)) || isUrl(query);
 }
 
-// DisTube Events
-// DisTube Events with better error handling
+// Enhanced error logging function
+function logError(context, error) {
+    console.error(`[${context}] Error:`, {
+        message: error.message || error,
+        stack: error.stack,
+        name: error.name,
+        code: error.code,
+        timestamp: new Date().toISOString()
+    });
+}
+
+// DisTube Events with enhanced error handling
 distube.on('playSong', (queue, song) => {
     try {
         const embed = new EmbedBuilder()
@@ -85,17 +119,17 @@ distube.on('playSong', (queue, song) => {
             .setThumbnail(song.thumbnail)
             .setFooter({ 
                 text: `🔊 Volume: ${queue.volume}% • 🎶 Queue: ${queue.songs.length} songs`,
-                iconURL: client.user.displayAvatarURL()
+                iconURL: client.user?.displayAvatarURL() || null
             })
             .setTimestamp();
 
         if (queue.textChannel && typeof queue.textChannel.send === 'function') {
             queue.textChannel.send({ embeds: [embed] }).catch(err => {
-                console.error('Failed to send playSong message:', err);
+                logError('playSong message send', err);
             });
         }
     } catch (error) {
-        console.error('Error in playSong event:', error);
+        logError('playSong event', error);
     }
 });
 
@@ -113,17 +147,17 @@ distube.on('addSong', (queue, song) => {
             .setThumbnail(song.thumbnail)
             .setFooter({ 
                 text: `🎵 Total songs in queue: ${queue.songs.length}`,
-                iconURL: client.user.displayAvatarURL()
+                iconURL: client.user?.displayAvatarURL() || null
             })
             .setTimestamp();
 
         if (queue.textChannel && typeof queue.textChannel.send === 'function') {
             queue.textChannel.send({ embeds: [embed] }).catch(err => {
-                console.error('Failed to send addSong message:', err);
+                logError('addSong message send', err);
             });
         }
     } catch (error) {
-        console.error('Error in addSong event:', error);
+        logError('addSong event', error);
     }
 });
 
@@ -141,69 +175,93 @@ distube.on('addList', (queue, playlist) => {
             .setThumbnail(playlist.thumbnail)
             .setFooter({ 
                 text: `🎶 Added ${playlist.songs.length} songs to queue`,
-                iconURL: client.user.displayAvatarURL()
+                iconURL: client.user?.displayAvatarURL() || null
             })
             .setTimestamp();
 
         if (queue.textChannel && typeof queue.textChannel.send === 'function') {
             queue.textChannel.send({ embeds: [embed] }).catch(err => {
-                console.error('Failed to send addList message:', err);
+                logError('addList message send', err);
             });
         }
     } catch (error) {
-        console.error('Error in addList event:', error);
+        logError('addList event', error);
     }
 });
 
 distube.on('searchResult', (message, result) => {
-    let i = 0;
-    const embed = new EmbedBuilder()
-        .setColor('#3498DB')
-        .setTitle('🔍 Search Results')
-        .setDescription(
-            `${result.map(song => `**${++i}**. [${song.name}](${song.url}) - \`${song.formattedDuration}\``).join('\n')}`
-        )
-        .setFooter({ 
-            text: 'Choose a number from 1-10 or type "cancel" to cancel',
-            iconURL: client.user.displayAvatarURL()
-        })
-        .setTimestamp();
+    try {
+        let i = 0;
+        const embed = new EmbedBuilder()
+            .setColor('#3498DB')
+            .setTitle('🔍 Search Results')
+            .setDescription(
+                `${result.map(song => `**${++i}**. [${song.name}](${song.url}) - \`${song.formattedDuration}\``).join('\n')}`
+            )
+            .setFooter({ 
+                text: 'Choose a number from 1-10 or type "cancel" to cancel',
+                iconURL: client.user?.displayAvatarURL() || null
+            })
+            .setTimestamp();
 
-    message.channel.send({ embeds: [embed] });
+        message.channel.send({ embeds: [embed] }).catch(err => {
+            logError('searchResult message send', err);
+        });
+    } catch (error) {
+        logError('searchResult event', error);
+    }
 });
 
 distube.on('searchCancel', (message) => {
-    const embed = new EmbedBuilder()
-        .setColor('#FFD93D')
-        .setTitle('❌ Search Cancelled')
-        .setDescription('Search has been cancelled!')
-        .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setColor('#FFD93D')
+            .setTitle('❌ Search Cancelled')
+            .setDescription('Search has been cancelled!')
+            .setTimestamp();
 
-    message.channel.send({ embeds: [embed] });
+        message.channel.send({ embeds: [embed] }).catch(err => {
+            logError('searchCancel message send', err);
+        });
+    } catch (error) {
+        logError('searchCancel event', error);
+    }
 });
 
 distube.on('searchInvalidAnswer', (message) => {
-    const embed = new EmbedBuilder()
-        .setColor('#FF6B6B')
-        .setTitle('❌ Invalid Selection')
-        .setDescription('Please choose a number from 1-10 or type "cancel"!')
-        .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setColor('#FF6B6B')
+            .setTitle('❌ Invalid Selection')
+            .setDescription('Please choose a number from 1-10 or type "cancel"!')
+            .setTimestamp();
 
-    message.channel.send({ embeds: [embed] });
+        message.channel.send({ embeds: [embed] }).catch(err => {
+            logError('searchInvalidAnswer message send', err);
+        });
+    } catch (error) {
+        logError('searchInvalidAnswer event', error);
+    }
 });
 
 distube.on('searchNoResult', (message) => {
-    const embed = new EmbedBuilder()
-        .setColor('#FF6B6B')
-        .setTitle('❌ No Results Found')
-        .setDescription('No search results found! Please try a different search term.')
-        .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setColor('#FF6B6B')
+            .setTitle('❌ No Results Found')
+            .setDescription('No search results found! Please try a different search term.')
+            .setTimestamp();
 
-    message.channel.send({ embeds: [embed] });
+        message.channel.send({ embeds: [embed] }).catch(err => {
+            logError('searchNoResult message send', err);
+        });
+    } catch (error) {
+        logError('searchNoResult event', error);
+    }
 });
 
 distube.on('error', (channel, error) => {
-    console.error('DisTube Error:', error);
+    logError('DisTube', error);
     
     // Check if channel is valid and has a send method
     if (!channel || typeof channel.send !== 'function') {
@@ -212,367 +270,477 @@ distube.on('error', (channel, error) => {
     }
     
     const errorMessage = getErrorMessage(error);
+    
+    // Handle specific error types
+    let userFriendlyMessage = 'An error occurred while processing your request.';
+    let troubleshootingTips = 'Please try again later.';
+    
+    if (errorMessage.includes('Sign in to confirm your age')) {
+        userFriendlyMessage = 'This video is age-restricted and cannot be played.';
+        troubleshootingTips = 'Try searching for a different version of the song.';
+    } else if (errorMessage.includes('Video unavailable')) {
+        userFriendlyMessage = 'The requested video is unavailable.';
+        troubleshootingTips = 'The video may be private, deleted, or region-locked. Try a different search term.';
+    } else if (errorMessage.includes('No suitable format found')) {
+        userFriendlyMessage = 'Unable to extract audio from this source.';
+        troubleshootingTips = 'Try searching for the song with different keywords.';
+    } else if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('network')) {
+        userFriendlyMessage = 'Network connection error.';
+        troubleshootingTips = 'Check your internet connection and try again.';
+    }
+    
     const embed = new EmbedBuilder()
         .setColor('#FF6B6B')
         .setTitle('❌ Error Occurred')
-        .setDescription(`\`\`\`${errorMessage.slice(0, 1900)}\`\`\``)
+        .setDescription(userFriendlyMessage)
+        .addFields({
+            name: '💡 Troubleshooting',
+            value: troubleshootingTips
+        })
         .setFooter({ 
-            text: 'Please try again or contact support if the issue persists',
-            iconURL: client.user.displayAvatarURL()
+            text: 'If this problem persists, contact support',
+            iconURL: client.user?.displayAvatarURL() || null
         })
         .setTimestamp();
 
+    // Only show detailed error in development
+    if (process.env.NODE_ENV === 'development') {
+        embed.addFields({
+            name: '🔧 Debug Info',
+            value: `\`\`\`${errorMessage.slice(0, 1000)}\`\`\``
+        });
+    }
+
     channel.send({ embeds: [embed] }).catch(err => {
-        console.error('Failed to send error message to channel:', err);
+        logError('DisTube error message send', err);
     });
 });
 
 distube.on('empty', (queue) => {
-    const embed = new EmbedBuilder()
-        .setColor('#FFD93D')
-        .setTitle('📭 Voice Channel Empty')
-        .setDescription('The voice channel is empty! I\'ll leave in 30 seconds...')
-        .setFooter({ 
-            text: 'Join the voice channel to continue listening',
-            iconURL: client.user.displayAvatarURL()
-        })
-        .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setColor('#FFD93D')
+            .setTitle('📭 Voice Channel Empty')
+            .setDescription('The voice channel is empty! Leaving in 30 seconds...')
+            .setFooter({ 
+                text: 'Join the voice channel to continue listening',
+                iconURL: client.user?.displayAvatarURL() || null
+            })
+            .setTimestamp();
 
-    queue.textChannel.send({ embeds: [embed] });
+        if (queue.textChannel && typeof queue.textChannel.send === 'function') {
+            queue.textChannel.send({ embeds: [embed] }).catch(err => {
+                logError('empty message send', err);
+            });
+        }
+    } catch (error) {
+        logError('empty event', error);
+    }
 });
 
 distube.on('finish', (queue) => {
-    const embed = new EmbedBuilder()
-        .setColor('#A8E6CF')
-        .setTitle('🎉 Queue Finished')
-        .setDescription('All songs have been played! Add more songs to continue the party!')
-        .setFooter({ 
-            text: 'Use w!play to add more music',
-            iconURL: client.user.displayAvatarURL()
-        })
-        .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setColor('#A8E6CF')
+            .setTitle('🎉 Queue Finished')
+            .setDescription('All songs have been played! Add more songs to continue the party!')
+            .setFooter({ 
+                text: 'Use w!play to add more music',
+                iconURL: client.user?.displayAvatarURL() || null
+            })
+            .setTimestamp();
 
-    queue.textChannel.send({ embeds: [embed] });
+        if (queue.textChannel && typeof queue.textChannel.send === 'function') {
+            queue.textChannel.send({ embeds: [embed] }).catch(err => {
+                logError('finish message send', err);
+            });
+        }
+    } catch (error) {
+        logError('finish event', error);
+    }
 });
 
 distube.on('disconnect', (queue) => {
-    const embed = new EmbedBuilder()
-        .setColor('#95A5A6')
-        .setTitle('👋 Disconnected')
-        .setDescription('Successfully disconnected from the voice channel!')
-        .setFooter({ 
-            text: 'Thanks for using the music bot!',
-            iconURL: client.user.displayAvatarURL()
-        })
-        .setTimestamp();
+    try {
+        const embed = new EmbedBuilder()
+            .setColor('#95A5A6')
+            .setTitle('👋 Disconnected')
+            .setDescription('Successfully disconnected from the voice channel!')
+            .setFooter({ 
+                text: 'Thanks for using the music bot!',
+                iconURL: client.user?.displayAvatarURL() || null
+            })
+            .setTimestamp();
 
-    queue.textChannel.send({ embeds: [embed] });
+        if (queue.textChannel && typeof queue.textChannel.send === 'function') {
+            queue.textChannel.send({ embeds: [embed] }).catch(err => {
+                logError('disconnect message send', err);
+            });
+        }
+    } catch (error) {
+        logError('disconnect event', error);
+    }
 });
 
 distube.on('initQueue', (queue) => {
-    queue.autoplay = false;
-    queue.volume = 50;
+    try {
+        queue.autoplay = false;
+        queue.volume = 50;
+    } catch (error) {
+        logError('initQueue event', error);
+    }
 });
-
-// Format duration helper (for manual formatting if needed)
-function formatDuration(seconds) {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
-
-// Helper function to validate YouTube playlist URL
-function isValidPlaylistUrl(url) {
-    const playlistRegex = /^https?:\/\/(www\.)?(youtube\.com\/playlist\?list=|youtu\.be\/playlist\?list=)/i;
-    return playlistRegex.test(url);
-}
 
 // Bot ready event
 client.once('ready', () => {
-    console.log(`${client.user.tag} is online!`);
-    client.user.setActivity('to w!help', { type: ActivityType.Listening });
+    console.log(`✅ ${client.user.tag} is online and ready!`);
+    console.log(`📊 Serving ${client.guilds.cache.size} guilds`);
+    
+    try {
+        client.user.setActivity('to w!help | Music Bot', { type: ActivityType.Listening });
+    } catch (error) {
+        logError('setActivity', error);
+    }
 });
 
-// Message handler
+// Enhanced message handler with better error handling
 client.on('messageCreate', async (message) => {
+    // Early returns for invalid messages
     if (message.author.bot || !message.content.startsWith('w!')) return;
 
-    const args = message.content.slice(2).trim().split(/\s+/);
-    const command = args.shift().toLowerCase();
+    try {
+        const args = message.content.slice(2).trim().split(/\s+/);
+        const command = args.shift().toLowerCase();
 
-    const voiceChannel = message.member?.voice?.channel;
-    const queue = distube.getQueue(message.guild.id);
+        const voiceChannel = message.member?.voice?.channel;
+        const queue = distube.getQueue(message.guild.id);
 
-    switch (command) {
-        case 'play':
-        case 'p': {
-            if (!voiceChannel) {
+        // Check bot permissions
+        if (voiceChannel) {
+            const permissions = voiceChannel.permissionsFor(client.user);
+            if (!permissions.has(['Connect', 'Speak'])) {
                 const embed = new EmbedBuilder()
                     .setColor('#FF6B6B')
-                    .setTitle('❌ Voice Channel Required')
-                    .setDescription('You need to be in a voice channel to play music!')
+                    .setTitle('❌ Missing Permissions')
+                    .setDescription('I need permission to connect and speak in your voice channel!')
                     .setFooter({ 
-                        text: 'Join a voice channel and try again',
-                        iconURL: client.user.displayAvatarURL()
+                        text: 'Please check my permissions and try again',
+                        iconURL: client.user?.displayAvatarURL() || null
                     })
                     .setTimestamp();
                 
                 return message.reply({ embeds: [embed] });
             }
-
-            if (!args.length) {
-                const embed = new EmbedBuilder()
-                    .setColor('#FFD93D')
-                    .setTitle('🎵 Song Required')
-                    .setDescription('Please provide a song name and artist!')
-                    .addFields({
-                        name: '✅ Correct Usage',
-                        value: '`w!play Never Gonna Give You Up - Rick Astley`\n`w!play Bohemian Rhapsody Queen`\n`w!play Despacito`'
-                    })
-                    .setFooter({ 
-                        text: 'Song titles only - No URLs allowed!',
-                        iconURL: client.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
-                
-                return message.reply({ embeds: [embed] });
-            }
-
-            const query = args.join(' ');
-            
-            // Check if the query contains a URL
-            if (isMusicUrl(query)) {
-                const embed = new EmbedBuilder()
-                    .setColor('#FF6B6B')
-                    .setTitle('🚫 URLs Not Allowed')
-                    .setDescription('Please do not use URLs! Only provide the song title and artist name.')
-                    .addFields(
-                        {
-                            name: '❌ What NOT to do',
-                            value: '`w!play https://youtube.com/watch?v=...`\n`w!play https://spotify.com/track/...`\n`w!play youtu.be/...`',
-                            inline: false
-                        },
-                        {
-                            name: '✅ What TO do instead',
-                            value: '`w!play Never Gonna Give You Up - Rick Astley`\n`w!play Bohemian Rhapsody Queen`\n`w!play Shape of You Ed Sheeran`',
-                            inline: false
-                        },
-                        {
-                            name: '💡 Why?',
-                            value: 'Using song titles ensures better search results and prevents broken links!',
-                            inline: false
-                        }
-                    )
-                    .setFooter({ 
-                        text: 'Try again with just the song title and artist name',
-                        iconURL: client.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
-                
-                return message.reply({ embeds: [embed] });
-            }
-            
-            try {
-                await distube.play(voiceChannel, query, {
-                    textChannel: message.channel,
-                    member: message.member
-                });
-            } catch (error) {
-                console.error('Play error:', error);
-                
-                const errorMessage = getErrorMessage(error);
-                const embed = new EmbedBuilder()
-                    .setColor('#FF6B6B')
-                    .setTitle('❌ Playback Error')
-                    .setDescription(`Unable to find or play the requested song: \`${errorMessage.slice(0, 100)}...\``)
-                    .addFields({
-                        name: '💡 Troubleshooting Tips',
-                        value: '• Check your spelling\n• Try adding the artist name\n• Use more specific search terms\n• Make sure the song exists on YouTube'
-                    })
-                    .setFooter({ 
-                        text: 'Example: w!play Despacito Luis Fonsi',
-                        iconURL: client.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
-                
-                message.channel.send({ embeds: [embed] }).catch(err => {
-                    console.error('Failed to send play error message:', err);
-                });
-            }
-            break;
         }
 
-        case 'stop': {
-            if (!queue) {
-                const embed = new EmbedBuilder()
-                    .setColor('#FFD93D')
-                    .setTitle('❌ Nothing Playing')
-                    .setDescription('There\'s no music currently playing!')
-                    .setFooter({ 
-                        text: 'Use w!play to start playing music',
-                        iconURL: client.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
+        switch (command) {
+            case 'play':
+            case 'p': {
+                if (!voiceChannel) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FF6B6B')
+                        .setTitle('❌ Voice Channel Required')
+                        .setDescription('You need to be in a voice channel to play music!')
+                        .setFooter({ 
+                            text: 'Join a voice channel and try again',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    return message.reply({ embeds: [embed] });
+                }
+
+                if (!args.length) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFD93D')
+                        .setTitle('🎵 Song Required')
+                        .setDescription('Please provide a song name and artist!')
+                        .addFields({
+                            name: '✅ Correct Usage',
+                            value: '`w!play Never Gonna Give You Up - Rick Astley`\n`w!play Bohemian Rhapsody Queen`\n`w!play Despacito`'
+                        })
+                        .setFooter({ 
+                            text: 'Song titles only - No URLs allowed!',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    return message.reply({ embeds: [embed] });
+                }
+
+                const query = args.join(' ');
                 
-                return message.reply({ embeds: [embed] });
+                // Check if the query contains a URL
+                if (isMusicUrl(query)) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FF6B6B')
+                        .setTitle('🚫 URLs Not Allowed')
+                        .setDescription('Please do not use URLs! Only provide the song title and artist name.')
+                        .addFields(
+                            {
+                                name: '❌ What NOT to do',
+                                value: '`w!play https://youtube.com/watch?v=...`\n`w!play https://spotify.com/track/...`\n`w!play youtu.be/...`',
+                                inline: false
+                            },
+                            {
+                                name: '✅ What TO do instead',
+                                value: '`w!play Never Gonna Give You Up - Rick Astley`\n`w!play Bohemian Rhapsody Queen`\n`w!play Shape of You Ed Sheeran`',
+                                inline: false
+                            },
+                            {
+                                name: '💡 Why?',
+                                value: 'Using song titles ensures better search results and prevents broken links!',
+                                inline: false
+                            }
+                        )
+                        .setFooter({ 
+                            text: 'Try again with just the song title and artist name',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    return message.reply({ embeds: [embed] });
+                }
+                
+                try {
+                    // Send a "searching" message
+                    const searchEmbed = new EmbedBuilder()
+                        .setColor('#FFD93D')
+                        .setTitle('🔍 Searching...')
+                        .setDescription(`Looking for: **${query}**`)
+                        .setTimestamp();
+                    
+                    const searchMessage = await message.channel.send({ embeds: [searchEmbed] });
+                    
+                    await distube.play(voiceChannel, query, {
+                        textChannel: message.channel,
+                        member: message.member
+                    });
+                    
+                    // Delete the searching message after successful play
+                    searchMessage.delete().catch(() => {});
+                    
+                } catch (error) {
+                    logError('Play command', error);
+                    
+                    const errorMessage = getErrorMessage(error);
+                    const embed = new EmbedBuilder()
+                        .setColor('#FF6B6B')
+                        .setTitle('❌ Playback Error')
+                        .setDescription(`Unable to find or play the requested song.`)
+                        .addFields({
+                            name: '💡 Troubleshooting Tips',
+                            value: '• Check your spelling\n• Try adding the artist name\n• Use more specific search terms\n• Make sure the song exists on YouTube'
+                        })
+                        .setFooter({ 
+                            text: 'Example: w!play Despacito Luis Fonsi',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    // Add debug info in development
+                    if (process.env.NODE_ENV === 'development') {
+                        embed.addFields({
+                            name: '🔧 Debug Info',
+                            value: `\`\`\`${errorMessage.slice(0, 500)}\`\`\``
+                        });
+                    }
+                    
+                    message.channel.send({ embeds: [embed] }).catch(err => {
+                        logError('Play error message send', err);
+                    });
+                }
+                break;
             }
 
-            distube.voices.leave(message.guild.id);
-            
-            break;
-        }
+            case 'stop': {
+                if (!queue) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFD93D')
+                        .setTitle('❌ Nothing Playing')
+                        .setDescription('There\'s no music currently playing!')
+                        .setFooter({ 
+                            text: 'Use w!play to start playing music',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    return message.reply({ embeds: [embed] });
+                }
 
-        case 'skip':
-        case 's': {
-            if (!queue) {
-                const embed = new EmbedBuilder()
-                    .setColor('#FFD93D')
-                    .setTitle('❌ Nothing Playing')
-                    .setDescription('There\'s no music currently playing!')
-                    .setFooter({ 
-                        text: 'Use w!play to start playing music',
-                        iconURL: client.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
-                
-                return message.reply({ embeds: [embed] });
+                try {
+                    distube.stop(message.guild.id);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#4ECDC4')
+                        .setTitle('⏹️ Music Stopped')
+                        .setDescription('Music has been stopped and queue cleared!')
+                        .setFooter({ 
+                            text: 'Use w!play to start playing music again',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    message.channel.send({ embeds: [embed] });
+                } catch (error) {
+                    logError('Stop command', error);
+                }
+                break;
             }
 
-            if (queue.songs.length === 1) {
-                const embed = new EmbedBuilder()
-                    .setColor('#FFD93D')
-                    .setTitle('❌ No Next Song')
-                    .setDescription('There are no more songs in the queue to skip to!')
-                    .setFooter({ 
-                        text: 'Add more songs with w!play',
-                        iconURL: client.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
-                
-                return message.reply({ embeds: [embed] });
+            case 'skip':
+            case 's': {
+                if (!queue) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFD93D')
+                        .setTitle('❌ Nothing Playing')
+                        .setDescription('There\'s no music currently playing!')
+                        .setFooter({ 
+                            text: 'Use w!play to start playing music',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    return message.reply({ embeds: [embed] });
+                }
+
+                if (queue.songs.length === 1) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFD93D')
+                        .setTitle('❌ No Next Song')
+                        .setDescription('There are no more songs in the queue to skip to!')
+                        .setFooter({ 
+                            text: 'Add more songs with w!play',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    return message.reply({ embeds: [embed] });
+                }
+
+                try {
+                    const skipped = await distube.skip(message.guild.id);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#4ECDC4')
+                        .setTitle('⏭️ Song Skipped')
+                        .setDescription(`Skipped **[${skipped.name}](${skipped.url})**`)
+                        .setThumbnail(skipped.thumbnail)
+                        .setFooter({ 
+                            text: `${queue.songs.length - 1} songs remaining in queue`,
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    message.channel.send({ embeds: [embed] });
+                } catch (error) {
+                    logError('Skip command', error);
+                    
+                    const embed = new EmbedBuilder()
+                        .setColor('#FF6B6B')
+                        .setTitle('❌ Skip Error')
+                        .setDescription('Unable to skip the current song!')
+                        .setFooter({ 
+                            text: 'Please try again',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    message.channel.send({ embeds: [embed] });
+                }
+                break;
             }
 
-            try {
-                const skipped = await distube.skip(message.guild.id);
-                
+            case 'queue':
+            case 'q': {
+                if (!queue || !queue.songs.length) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFD93D')
+                        .setTitle('📭 Empty Queue')
+                        .setDescription('The music queue is currently empty!')
+                        .addFields({
+                            name: '💡 Get Started',
+                            value: 'Use `w!play <song name>` to add songs to the queue!'
+                        })
+                        .setFooter({ 
+                            text: 'Add some music to get the party started!',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    return message.reply({ embeds: [embed] });
+                }
+
                 const embed = new EmbedBuilder()
-                    .setColor('#4ECDC4')
-                    .setTitle('⏭️ Song Skipped')
-                    .setDescription(`Skipped **[${skipped.name}](${skipped.url})**`)
-                    .setThumbnail(skipped.thumbnail)
-                    .setFooter({ 
-                        text: `${queue.songs.length - 1} songs remaining in queue`,
-                        iconURL: client.user.displayAvatarURL()
-                    })
+                    .setColor('#9B59B6')
+                    .setTitle('🎵 Music Queue')
                     .setTimestamp();
-                
-                message.channel.send({ embeds: [embed] });
-            } catch (error) {
-                const embed = new EmbedBuilder()
-                    .setColor('#FF6B6B')
-                    .setTitle('❌ Skip Error')
-                    .setDescription('Unable to skip the current song!')
-                    .setFooter({ 
-                        text: 'Please try again',
-                        iconURL: client.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
-                
-                message.channel.send({ embeds: [embed] });
-            }
-            break;
-        }
 
-        case 'queue':
-        case 'q': {
-            if (!queue || !queue.songs.length) {
-                const embed = new EmbedBuilder()
-                    .setColor('#FFD93D')
-                    .setTitle('📭 Empty Queue')
-                    .setDescription('The music queue is currently empty!')
-                    .addFields({
-                        name: '💡 Get Started',
-                        value: 'Use `w!play <song name>` to add songs to the queue!'
-                    })
-                    .setFooter({ 
-                        text: 'Add some music to get the party started!',
-                        iconURL: client.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
-                
-                return message.reply({ embeds: [embed] });
-            }
-
-            const embed = new EmbedBuilder()
-                .setColor('#9B59B6')
-                .setTitle('🎵 Music Queue')
-                .setTimestamp();
-
-            const currentSong = queue.songs[0];
-            embed.addFields({
-                name: '🎵 Now Playing',
-                value: `**[${currentSong.name}](${currentSong.url})**\n` +
-                       `⏱️ Duration: \`${currentSong.formattedDuration}\` | 👤 ${currentSong.user}`,
-                inline: false
-            });
-
-            if (queue.songs.length > 1) {
-                const upcoming = queue.songs.slice(1, 11).map((song, index) => 
-                    `**${index + 1}.** [${song.name}](${song.url})\n` +
-                    `⏱️ \`${song.formattedDuration}\` | 👤 ${song.user}`
-                ).join('\n\n');
-
+                const currentSong = queue.songs[0];
                 embed.addFields({
-                    name: '📋 Up Next',
-                    value: upcoming,
+                    name: '🎵 Now Playing',
+                    value: `**[${currentSong.name}](${currentSong.url})**\n` +
+                           `⏱️ Duration: \`${currentSong.formattedDuration}\` | 👤 ${currentSong.user}`,
                     inline: false
                 });
 
-                if (queue.songs.length > 11) {
-                    embed.setFooter({ 
-                        text: `And ${queue.songs.length - 11} more songs... | Total: ${queue.songs.length} songs`,
-                        iconURL: client.user.displayAvatarURL()
+                if (queue.songs.length > 1) {
+                    const upcoming = queue.songs.slice(1, 11).map((song, index) => 
+                        `**${index + 1}.** [${song.name}](${song.url})\n` +
+                        `⏱️ \`${song.formattedDuration}\` | 👤 ${song.user}`
+                    ).join('\n\n');
+
+                    embed.addFields({
+                        name: '📋 Up Next',
+                        value: upcoming,
+                        inline: false
                     });
+
+                    if (queue.songs.length > 11) {
+                        embed.setFooter({ 
+                            text: `And ${queue.songs.length - 11} more songs... | Total: ${queue.songs.length} songs`,
+                            iconURL: client.user?.displayAvatarURL() || null
+                        });
+                    } else {
+                        embed.setFooter({ 
+                            text: `Total: ${queue.songs.length} songs in queue`,
+                            iconURL: client.user?.displayAvatarURL() || null
+                        });
+                    }
                 } else {
                     embed.setFooter({ 
-                        text: `Total: ${queue.songs.length} songs in queue`,
-                        iconURL: client.user.displayAvatarURL()
+                        text: 'Add more songs with w!play',
+                        iconURL: client.user?.displayAvatarURL() || null
                     });
                 }
-            } else {
-                embed.setFooter({ 
-                    text: 'Add more songs with w!play',
-                    iconURL: client.user.displayAvatarURL()
-                });
+
+                embed.addFields(
+                    { name: '🔊 Volume', value: `\`${queue.volume}%\``, inline: true },
+                    { name: '🔁 Loop', value: queue.repeatMode ? (queue.repeatMode === 2 ? '`Queue`' : '`Song`') : '`Off`', inline: true },
+                    { name: '🎲 Autoplay', value: queue.autoplay ? '`On`' : '`Off`', inline: true }
+                );
+
+                message.channel.send({ embeds: [embed] });
+                break;
             }
 
-            embed.addFields(
-                { name: '🔊 Volume', value: `\`${queue.volume}%\``, inline: true },
-                { name: '🔁 Loop', value: queue.repeatMode ? (queue.repeatMode === 2 ? '`Queue`' : '`Song`') : '`Off`', inline: true },
-                { name: '🎲 Autoplay', value: queue.autoplay ? '`On`' : '`Off`', inline: true }
-            );
+            case 'loop':
+            case 'repeat': {
+                if (!queue) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFD93D')
+                        .setTitle('❌ Nothing Playing')
+                        .setDescription('There\'s no music currently playing!')
+                        .setFooter({ 
+                            text: 'Use w!play to start playing music',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    return message.reply({ embeds: [embed] });
+                }
 
-            message.channel.send({ embeds: [embed] });
-            break;
-        }
-
-        case 'loop':
-        case 'repeat': {
-            if (!queue) {
-                const embed = new EmbedBuilder()
-                    .setColor('#FFD93D')
-                    .setTitle('❌ Nothing Playing')
-                    .setDescription('There\'s no music currently playing!')
-                    .setFooter({ 
-                        text: 'Use w!play to start playing music',
-                        iconURL: client.user.displayAvatarURL()
-                    })
-                    .setTimestamp();
-                
-                return message.reply({ embeds: [embed] });
-            }
-
-            const mode = args[0];
+                const mode = args[0];
             let repeatMode;
 
             if (!mode) {
@@ -735,7 +903,10 @@ client.on('messageCreate', async (message) => {
             break;
         }
     }
-});
+}catch (error) {
+    logError('messageCreate event', error);
+}
+})
 
 // Login with your bot token
 client.login(process.env.DISCORD_TOKEN);
