@@ -20,7 +20,55 @@ const client = new Client({
     ]
 });
 
-// DisTube configuration with improved settings and error handling
+// Rate limiting and retry configuration
+const RATE_LIMIT_CONFIG = {
+    maxRetries: 3,
+    baseDelay: 2000, // 2 seconds
+    maxDelay: 30000, // 30 seconds
+    backoffFactor: 2
+};
+
+// Queue for managing requests
+const requestQueue = new Map();
+
+// Helper function to add delay
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Enhanced retry function with exponential backoff
+async function retryWithBackoff(fn, context = 'operation', maxRetries = RATE_LIMIT_CONFIG.maxRetries) {
+    let lastError;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            return await fn();
+        } catch (error) {
+            lastError = error;
+            
+            const isRateLimit = error.statusCode === 429 || 
+                               error.message?.includes('429') ||
+                               error.message?.includes('Too Many Requests') ||
+                               error.message?.toLowerCase().includes('rate limit');
+            
+            if (!isRateLimit || attempt === maxRetries) {
+                throw error;
+            }
+            
+            const delayTime = Math.min(
+                RATE_LIMIT_CONFIG.baseDelay * Math.pow(RATE_LIMIT_CONFIG.backoffFactor, attempt - 1),
+                RATE_LIMIT_CONFIG.maxDelay
+            );
+            
+            console.log(`[${context}] Rate limited (attempt ${attempt}/${maxRetries}), retrying in ${delayTime}ms...`);
+            await delay(delayTime);
+        }
+    }
+    
+    throw lastError;
+}
+
+// DisTube configuration with enhanced rate limiting protection
 const distube = new DisTube(client, {
     emitNewSongOnly: true,
     emitAddSongWhenCreatingQueue: false,
@@ -30,19 +78,39 @@ const distube = new DisTube(client, {
     },
     plugins: [
         new YtDlpPlugin({
-            update: false // Disable update checks
+            update: false,
+            retries: 3
         }),
         new YouTubePlugin({
-            cookies: [], // Add cookies if needed for age-restricted content
+            cookies: [], 
             ytdlOptions: {
-                highWaterMark: 1 << 25, // 32MB buffer
+                highWaterMark: 1 << 25,
                 quality: 'highestaudio',
                 filter: 'audioonly',
                 format: 'bestaudio[ext=webm+acodec=opus+asr=48000]/bestaudio',
                 requestOptions: {
                     headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                    }
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                        'Accept-Language': 'en-us,en;q=0.5',
+                        'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120"',
+                        'Sec-Ch-Ua-Mobile': '?0',
+                        'Sec-Ch-Ua-Platform': '"Windows"',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1',
+                        'Upgrade-Insecure-Requests': '1'
+                    },
+                    timeout: 30000 // 30 second timeout
+                },
+                retries: 3,
+                retry: {
+                    retries: 3,
+                    factor: 2,
+                    minTimeout: 1000,
+                    maxTimeout: 60000,
+                    randomize: true
                 }
             }
         }),
@@ -87,7 +155,7 @@ function isMusicUrl(query) {
         /^https?:\/\/(www\.)?deezer\.com/i,
         /^https?:\/\/(www\.)?tidal\.com/i,
         /^https?:\/\/(www\.)?pandora\.com/i,
-        /^https?:\/\//i // Generic URL pattern
+        /^https?:\/\//i
     ];
     
     return urlPatterns.some(pattern => pattern.test(query)) || isUrl(query);
@@ -100,8 +168,22 @@ function logError(context, error) {
         stack: error.stack,
         name: error.name,
         code: error.code,
+        statusCode: error.statusCode,
         timestamp: new Date().toISOString()
     });
+}
+
+// Enhanced queue management for rate limiting
+function canMakeRequest(guildId) {
+    const now = Date.now();
+    const lastRequest = requestQueue.get(guildId);
+    
+    if (!lastRequest || now - lastRequest > 5000) { // 5 second cooldown per guild
+        requestQueue.set(guildId, now);
+        return true;
+    }
+    
+    return false;
 }
 
 // DisTube Events with enhanced error handling
@@ -260,6 +342,7 @@ distube.on('searchNoResult', (message) => {
     }
 });
 
+// Enhanced error handler with specific rate limit handling
 distube.on('error', (channel, error) => {
     logError('DisTube', error);
     
@@ -270,12 +353,19 @@ distube.on('error', (channel, error) => {
     }
     
     const errorMessage = getErrorMessage(error);
+    const isRateLimit = error.statusCode === 429 || 
+                       errorMessage.includes('429') ||
+                       errorMessage.includes('Too Many Requests') ||
+                       errorMessage.toLowerCase().includes('rate limit');
     
     // Handle specific error types
     let userFriendlyMessage = 'An error occurred while processing your request.';
     let troubleshootingTips = 'Please try again later.';
     
-    if (errorMessage.includes('Sign in to confirm your age')) {
+    if (isRateLimit) {
+        userFriendlyMessage = '⏰ Service is temporarily busy due to high demand.';
+        troubleshootingTips = 'Please wait a few minutes before trying again. This helps prevent overloading the music services.';
+    } else if (errorMessage.includes('Sign in to confirm your age')) {
         userFriendlyMessage = 'This video is age-restricted and cannot be played.';
         troubleshootingTips = 'Try searching for a different version of the song.';
     } else if (errorMessage.includes('Video unavailable')) {
@@ -290,15 +380,15 @@ distube.on('error', (channel, error) => {
     }
     
     const embed = new EmbedBuilder()
-        .setColor('#FF6B6B')
-        .setTitle('❌ Error Occurred')
+        .setColor(isRateLimit ? '#FFD93D' : '#FF6B6B')
+        .setTitle(isRateLimit ? '⏰ Please Wait' : '❌ Error Occurred')
         .setDescription(userFriendlyMessage)
         .addFields({
             name: '💡 Troubleshooting',
             value: troubleshootingTips
         })
         .setFooter({ 
-            text: 'If this problem persists, contact support',
+            text: isRateLimit ? 'This helps keep the service running smoothly for everyone!' : 'If this problem persists, contact support',
             iconURL: client.user?.displayAvatarURL() || null
         })
         .setTimestamp();
@@ -403,7 +493,7 @@ client.once('ready', () => {
     }
 });
 
-// Enhanced message handler with better error handling
+// Enhanced message handler with rate limiting protection
 client.on('messageCreate', async (message) => {
     // Early returns for invalid messages
     if (message.author.bot || !message.content.startsWith('w!')) return;
@@ -501,21 +591,44 @@ client.on('messageCreate', async (message) => {
                     
                     return message.reply({ embeds: [embed] });
                 }
+
+                // Check rate limiting
+                if (!canMakeRequest(message.guild.id)) {
+                    const embed = new EmbedBuilder()
+                        .setColor('#FFD93D')
+                        .setTitle('⏰ Please Wait')
+                        .setDescription('Please wait a moment before making another request.')
+                        .addFields({
+                            name: '💡 Why the wait?',
+                            value: 'This helps prevent rate limiting and keeps the bot running smoothly for everyone!'
+                        })
+                        .setFooter({ 
+                            text: 'Try again in a few seconds',
+                            iconURL: client.user?.displayAvatarURL() || null
+                        })
+                        .setTimestamp();
+                    
+                    return message.reply({ embeds: [embed] });
+                }
                 
                 try {
                     // Send a "searching" message
                     const searchEmbed = new EmbedBuilder()
                         .setColor('#FFD93D')
                         .setTitle('🔍 Searching...')
-                        .setDescription(`Looking for: **${query}**`)
+                        .setDescription(`Looking for: **${query}**\n\n*Please wait, this may take a moment due to service limits...*`)
                         .setTimestamp();
                     
                     const searchMessage = await message.channel.send({ embeds: [searchEmbed] });
                     
-                    await distube.play(voiceChannel, query, {
-                        textChannel: message.channel,
-                        member: message.member
-                    });
+                    // Use retry mechanism for the play function
+                    await retryWithBackoff(
+                        () => distube.play(voiceChannel, query, {
+                            textChannel: message.channel,
+                            member: message.member
+                        }),
+                        `Play command for "${query}"`
+                    );
                     
                     // Delete the searching message after successful play
                     searchMessage.delete().catch(() => {});
@@ -524,16 +637,28 @@ client.on('messageCreate', async (message) => {
                     logError('Play command', error);
                     
                     const errorMessage = getErrorMessage(error);
+                    const isRateLimit = error.statusCode === 429 || 
+                                       errorMessage.includes('429') ||
+                                       errorMessage.includes('Too Many Requests');
+                    
                     const embed = new EmbedBuilder()
-                        .setColor('#FF6B6B')
-                        .setTitle('❌ Playback Error')
-                        .setDescription(`Unable to find or play the requested song.`)
+                        .setColor(isRateLimit ? '#FFD93D' : '#FF6B6B')
+                        .setTitle(isRateLimit ? '⏰ Service Busy' : '❌ Playback Error')
+                        .setDescription(
+                            isRateLimit 
+                                ? 'The music service is currently busy. Please try again in a few minutes.'
+                                : `Unable to find or play the requested song.`
+                        )
                         .addFields({
                             name: '💡 Troubleshooting Tips',
-                            value: '• Check your spelling\n• Try adding the artist name\n• Use more specific search terms\n• Make sure the song exists on YouTube'
+                            value: isRateLimit 
+                                ? '• Wait 2-3 minutes before trying again\n• Try a different song\n• This helps prevent overloading the service'
+                                : '• Check your spelling\n• Try adding the artist name\n• Use more specific search terms\n• Make sure the song exists on YouTube'
                         })
                         .setFooter({ 
-                            text: 'Example: w!play Despacito Luis Fonsi',
+                            text: isRateLimit 
+                                ? 'Thanks for your patience!' 
+                                : 'Example: w!play Despacito Luis Fonsi',
                             iconURL: client.user?.displayAvatarURL() || null
                         })
                         .setTimestamp();
